@@ -133,13 +133,15 @@ void A_input(struct pkt packet)
         if (buffer[i].acknum == NOTINUSE)
         {
           buffer[i].acknum = packet.acknum;
-          printf("----A: ACK %d is recieved\n",packet.acknum);
+          if (TRACE > 0)
+            printf("----A: ACK %d is not a duplicate\n",packet.acknum);
           total_ACKs_received++;
           newACK = true;
         }
         else
         {
-          printf("----A: duplicated ACK %d\n",packet.acknum);
+          if (TRACE > 0)
+            printf ("----A: duplicate ACK received, do nothing!\n");
 
         }
       }
@@ -157,16 +159,12 @@ void A_input(struct pkt packet)
     }    
     if (windowcount == 0 && newACK)
       stoptimer(A);
-
-    printf("windowcount : %d  windowfirst: %d\n",windowcount, windowfirst);
-    printf("----A: Wait for ACK %d\n",buffer[windowfirst].seqnum);
     
   }
   else 
   {
     if (TRACE > 0)
       printf ("----A: corrupted ACK is received, do nothing!\n");
-      printf("----A: Wait for ACK %d\n",buffer[windowfirst].seqnum);
   }
 }
 
@@ -229,34 +227,26 @@ void B_input(struct pkt packet)
 
 
   if  ( !IsCorrupted(packet) ) {
-
+    if (TRACE > 0)
+      printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
     
     if(((expectedseqnum < (expectedseqnum + WINDOWSIZE -1)%SEQSPACE) && (packet.seqnum >= expectedseqnum && packet.seqnum <= (expectedseqnum + WINDOWSIZE -1)%SEQSPACE)) ||
               ((expectedseqnum > (expectedseqnum + WINDOWSIZE -1)%SEQSPACE) && (packet.seqnum >= expectedseqnum || packet.seqnum <= (expectedseqnum + WINDOWSIZE -1)%SEQSPACE)))
     {
       B_index = ((packet.seqnum - expectedseqnum + SEQSPACE) % SEQSPACE)%WINDOWSIZE;
-      printf("----B: packet.seqnum: %d, B_index: %d ,Expectedseqnum: %d\n",packet.seqnum, B_index, expectedseqnum);
       if (B_buffer[B_index].seqnum != packet.seqnum)
       {
         packets_received++;
-        printf("----B: packets_received: %d\n",packets_received);
         B_buffer[B_index] = packet;
         for(B_windowfirst=0;B_buffer[B_windowfirst].seqnum == expectedseqnum;B_windowfirst=(B_windowfirst+1)%WINDOWSIZE)
         {
-          printf("----B: For function: B_windowfirst: %d, expectedseqnum:%d \n",B_windowfirst, expectedseqnum);
           tolayer5(B, B_buffer[B_windowfirst].payload);
           expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
         }
       }
-      if (TRACE > 0)
-        printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
       
     }
-    else
-    {
-      if (TRACE > 0)
-        printf("----B: packet %d outside recieve windows, send ACK!\n",packet.seqnum);
-    }    
+
     /* deliver to receiving application */
     
 
@@ -279,7 +269,7 @@ void B_input(struct pkt packet)
   else {
     /* packet is corrupted or out of order resend last ACK */
     if (TRACE > 0) 
-      printf("----B: packet corrupted, Do nothing\n");
+      printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
   }
 
 
