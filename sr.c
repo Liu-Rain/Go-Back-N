@@ -23,8 +23,8 @@
 **********************************************************************/
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
-#define WINDOWSIZE 4    /* the maximum number of buffered unacked packet */
-#define SEQSPACE 8      /* the min sequence space for GBN must be at least windowsize + 1 */
+#define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
+#define SEQSPACE 12      /* the min sequence space for GBN must be at least windowsize + 1 */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
 
 /* generic procedure to compute the checksum of a packet.  Used by both sender and receiver  
@@ -128,17 +128,18 @@ void A_input(struct pkt packet)
               ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
 
             /* packet is a new ACK */
-            if (TRACE > 0)
-              printf("----A: ACK %d is not a duplicate\n",packet.acknum);
-            new_ACKs++;
+
 
             /* cumulative acknowledgement - determine how many packets are ACKed */
 
             for (i=0; i<WINDOWSIZE; i++)
             {
-              if( buffer[i].seqnum == packet.acknum)
+              if( buffer[i].seqnum == packet.acknum && buffer[i].acknum == NOTINUSE)
               {
                 buffer[i].acknum = packet.acknum;
+                if (TRACE > 0)
+                  printf("----A: ACK %d is not a duplicate\n",packet.acknum);
+                new_ACKs++;
                 break;
               }
             }
@@ -229,12 +230,12 @@ void B_input(struct pkt packet)
       buffer_index = SEQSPACE - B_seqfirst + packet.seqnum;
 
     if (B_buffer[buffer_index].seqnum == NOTINUSE)
+    {
       B_buffer[buffer_index] = packet;
-
-    if (TRACE > 0)
-      printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
-    packets_received++;
-
+      if (TRACE > 0)
+        printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
+      packets_received++;
+    }
     /* deliver to receiving application */
     /* expectedseqnum and B_seqfirst is same, can remove one */
     while (B_buffer[0].seqnum == expectedseqnum)
