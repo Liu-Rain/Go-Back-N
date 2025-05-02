@@ -134,18 +134,20 @@ void A_input(struct pkt packet)
 
             /* cumulative acknowledgement - determine how many packets are ACKed */
 
-            for (i=seqfirst; i<=seqlast; i++)
+            for (i=0; i<WINDOWSIZE; i++)
             {
               if( buffer[i].seqnum == packet.acknum)
               {
                 buffer[i].acknum = packet.acknum;
+                break;
               }
             }
-            while (buffer[windowfirst].seqnum == buffer[windowfirst].acknum)
+
+            while (buffer[windowfirst].acknum!=NOTINUSE && windowcount!=0)
             {
+              stoptimer(A);
               windowfirst = (windowfirst + 1) % WINDOWSIZE;
               windowcount--;
-              stoptimer(A);
               if (windowcount > 0)
                 starttimer(A, RTT);
             }
@@ -178,9 +180,9 @@ void A_timerinterrupt(void)
       
       tolayer3(A,buffer[(windowfirst+i) % WINDOWSIZE]);
       packets_resent++;
-      if (i==0) starttimer(A,RTT);
     }
   }
+  starttimer(A,RTT);
 }       
 
 
@@ -205,28 +207,48 @@ void A_init(void)
 
 static int expectedseqnum; /* the sequence number expected next by the receiver */
 static int B_nextseqnum;   /* the sequence number for the next packets sent by B */
-
+static struct pkt B_buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
+static int B_windowfirst, B_windowlast;    /* array indexes of the first/last packet awaiting ACK */
+static int B_seqfirst, B_seqlast, B_windowcount;
 
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
   int i;
+  int buffer_index;
 
   /* if not corrupted and received packet is in order */
-  if  ( (!IsCorrupted(packet))  && (packet.seqnum == expectedseqnum) ) {
+  
+  if  ( (!IsCorrupted(packet))  && (((B_seqfirst <= B_seqlast) && (packet.seqnum >= B_seqfirst && packet.seqnum <= B_seqlast)) ||
+              ((B_seqfirst > B_seqlast) && (packet.seqnum >= B_seqfirst || packet.seqnum <= B_seqlast))) ) {
+    /*Calculate which index should put in*/
+    if (packet.seqnum >= B_seqfirst)
+      buffer_index = packet.seqnum - B_seqfirst;
+    else
+      buffer_index = SEQSPACE - B_seqfirst + packet.seqnum;
+
+    B_buffer[buffer_index] = packet;
+
     if (TRACE > 0)
       printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
     packets_received++;
 
     /* deliver to receiving application */
-    tolayer5(B, packet.payload);
+    /* expectedseqnum and B_seqfirst is same, can remove one */
+    for (i=0;i<WINDOWSIZE && B_buffer[i].seqnum == expectedseqnum;i++)
+    {
+      tolayer5(B, B_buffer[i].payload);
+      expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
+      B_seqfirst = (B_seqfirst + 1) % SEQSPACE;
+      B_seqlast = (B_seqlast + 1) % SEQSPACE;
+    }
 
     /* send an ACK for the received packet */
-    sendpkt.acknum = expectedseqnum;
+    sendpkt.acknum = sendpkt.seqnum;
 
     /* update state variables */
-    expectedseqnum = (expectedseqnum + 1) % SEQSPACE;        
+    
   }
   else {
     /* packet is corrupted or out of order resend last ACK */
@@ -257,9 +279,19 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
+  int i;
   expectedseqnum = 0;
   B_nextseqnum = 1;
-}
+
+  B_windowfirst = 0;
+  B_windowlast = -1; 
+  B_windowcount = 0;
+  B_seqfirst = 0;
+  B_seqlast = WINDOWSIZE - 1;
+  for (i = 0; i < WINDOWSIZE; i++) 
+  {
+    B_buffer[i].seqnum = NOTINUSE;  /*mark as empty*/ 
+  }}
 
 /******************************************************************************
  * The following functions need be completed only for bi-directional messages *
