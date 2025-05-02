@@ -256,29 +256,35 @@ void B_input(struct pkt packet)
     /* update state variables */
     
   }
-  else  {
+  else {
+    /* packet is corrupted or out of order resend last ACK */
+    if (TRACE > 0) 
+      printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
     if (!IsCorrupted(packet))
-      if (((B_seqfirst-WINDOWSIZE >= 0) && (packet.seqnum >= B_seqfirst-WINDOWSIZE)) || ((B_seqfirst-WINDOWSIZE < 0) && ((SEQSPACE-B_seqfirst+WINDOWSIZE-1 <= packet.seqnum ) || ( packet.seqnum < B_seqfirst-1))))
-        {
-          /* packet is corrupted or out of order resend last ACK */
-          if (TRACE > 0) 
-            printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
-          sendpkt.acknum = packet.seqnum;
-          /* create packet */
-          sendpkt.seqnum = B_nextseqnum;
-          B_nextseqnum = (B_nextseqnum + 1) % 2;
-            
-          /* we don't have any data to send.  fill payload with 0's */
-          for ( i=0; i<20 ; i++ ) 
-            sendpkt.payload[i] = '0';  
+      sendpkt.acknum = packet.seqnum;
+    else
+    {
+      if (expectedseqnum == 0)
+        sendpkt.acknum = SEQSPACE - 1;
+      else
+        sendpkt.acknum = expectedseqnum - 1;
+    }
 
-          /* computer checksum */
-          sendpkt.checksum = ComputeChecksum(sendpkt); 
-
-          /* send out packet */
-          tolayer3 (B, sendpkt);
-        }
   }
+
+  /* create packet */
+  sendpkt.seqnum = B_nextseqnum;
+  B_nextseqnum = (B_nextseqnum + 1) % 2;
+    
+  /* we don't have any data to send.  fill payload with 0's */
+  for ( i=0; i<20 ; i++ ) 
+    sendpkt.payload[i] = '0';  
+
+  /* computer checksum */
+  sendpkt.checksum = ComputeChecksum(sendpkt); 
+
+  /* send out packet */
+  tolayer3 (B, sendpkt);
 }
 
 /* the following routine will be called once (only) before any other */
