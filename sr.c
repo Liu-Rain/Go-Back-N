@@ -228,7 +228,8 @@ void B_input(struct pkt packet)
     else
       buffer_index = SEQSPACE - B_seqfirst + packet.seqnum;
 
-    B_buffer[buffer_index] = packet;
+    if (B_buffer[buffer_index].seqnum == NOTINUSE)
+      B_buffer[buffer_index] = packet;
 
     if (TRACE > 0)
       printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
@@ -236,16 +237,20 @@ void B_input(struct pkt packet)
 
     /* deliver to receiving application */
     /* expectedseqnum and B_seqfirst is same, can remove one */
-    for (i=0;i<WINDOWSIZE && B_buffer[i].seqnum == expectedseqnum;i++)
+    while (B_buffer[0].seqnum == expectedseqnum)
     {
-      tolayer5(B, B_buffer[i].payload);
+      tolayer5(B, B_buffer[0].payload);
+      for (i=0;i<WINDOWSIZE-1;i++)
+      {
+        B_buffer[i] = B_buffer[i+1];
+      }
+      B_buffer[WINDOWSIZE-1].seqnum = NOTINUSE;
       expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
       B_seqfirst = (B_seqfirst + 1) % SEQSPACE;
       B_seqlast = (B_seqlast + 1) % SEQSPACE;
     }
-
     /* send an ACK for the received packet */
-    sendpkt.acknum = sendpkt.seqnum;
+    sendpkt.acknum = packet.seqnum;
 
     /* update state variables */
     
@@ -254,10 +259,16 @@ void B_input(struct pkt packet)
     /* packet is corrupted or out of order resend last ACK */
     if (TRACE > 0) 
       printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
-    if (expectedseqnum == 0)
-      sendpkt.acknum = SEQSPACE - 1;
+    if (!IsCorrupted(packet))
+      sendpkt.acknum = packet.seqnum;
     else
-      sendpkt.acknum = expectedseqnum - 1;
+    {
+      if (expectedseqnum == 0)
+        sendpkt.acknum = SEQSPACE - 1;
+      else
+        sendpkt.acknum = expectedseqnum - 1;
+    }
+
   }
 
   /* create packet */
