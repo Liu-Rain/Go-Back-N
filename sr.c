@@ -60,15 +60,23 @@ static struct pkt buffer[WINDOWSIZE];  /* array for storing packets waiting for 
 static int windowfirst, windowlast;    /* array indexes of the first/last packet awaiting ACK */
 static int windowcount;                /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
+static int first_seq;               /*record the first seq num of the window*/
+
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
 {
   struct pkt sendpkt;
   int i;
+  int index;
+  int seqfirst = first_seq;
+  int seqlast = (first_seq + WINDOWSIZE-1) % SEQSPACE;
+  
 
   /* if not blocked waiting on ACK */
-  if ( windowcount < WINDOWSIZE) {
+  if (((seqfirst <= seqlast) && (A_nextseqnum >= seqfirst && A_nextseqnum <= seqlast)) ||
+    ((seqfirst > seqlast) && (A_nextseqnum >= seqfirst || A_nextseqnum <= seqlast)))
+  {
     if (TRACE > 1)
       printf("----A: New message arrives, send window is not full, send new messge to layer3!\n");
 
@@ -80,9 +88,11 @@ void A_output(struct msg message)
     sendpkt.checksum = ComputeChecksum(sendpkt); 
 
     /* put packet in window buffer */
-    /* windowlast will always be 0 for alternating bit; but not for GoBackN */
-    windowlast = (windowlast + 1) % WINDOWSIZE; 
-    buffer[windowlast] = sendpkt;
+    if (A_nextseqnum >= seqfirst)
+      index = A_nextseqnum - seqfirst;
+    else
+      index = WINDOWSIZE - seqfirst + A_nextseqnum;
+    buffer[index] = sendpkt;
     windowcount++;
 
     /* send out packet */
@@ -111,8 +121,11 @@ void A_output(struct msg message)
 */
 void A_input(struct pkt packet)
 {
+  int ackcount = 0;
   int i;
-
+  int seqfirst;
+  int seqlast;
+  int index;
   /* if received ACK is not corrupted */ 
   if (!IsCorrupted(packet)) {
     if (TRACE > 0)
@@ -120,44 +133,62 @@ void A_input(struct pkt packet)
     total_ACKs_received++;
 
     /* check if new ACK or duplicate */
-    if (windowcount != 0) {
-          int seqfirst = buffer[windowfirst].seqnum;
-          int seqlast = buffer[windowlast].seqnum;
-          /* check case when seqnum has and hasn't wrapped */
-          if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
-              ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
+    seqfirst = first_seq;
+    seqlast = (first_seq + WINDOWSIZE - 1) % SEQSPACE;
+    int seqfirst = buffer[windowfirst].seqnum;
+    int seqlast = buffer[windowlast].seqnum;
+    /* check case when seqnum has and hasn't wrapped */
+    if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
+        ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) 
+    {
+      if (packet.acknum >= seqfirst)
+            index = packet.acknum - seqfirst;
+      else
+        index = WINDOWSIZE - seqfirst + packet.acknum;
 
-            /* packet is a new ACK */
 
-
-            /* cumulative acknowledgement - determine how many packets are ACKed */
-
-            for (i=0; i<WINDOWSIZE; i++)
-            {
-              if( buffer[i].seqnum == packet.acknum && buffer[i].acknum == NOTINUSE)
-              {
-                buffer[i].acknum = packet.acknum;
-                if (TRACE > 0)
-                  printf("----A: ACK %d is not a duplicate\n",packet.acknum);
-                new_ACKs++;
-                break;
-              }
-            }
-
-            while (buffer[windowfirst].acknum!=NOTINUSE && windowcount!=0)
-            {
-              stoptimer(A);
-              windowfirst = (windowfirst + 1) % WINDOWSIZE;
-              windowcount--;
-              if (windowcount > 0)
-                starttimer(A, RTT);
-            }
-            
-          }
+      if (buffer[index].acknum == NOTINUSE)
+      {
+        /* packet is a new ACK */
+        if (TRACE > 0)
+          printf("----A: ACK %d is not a duplicate\n", packet.acknum);
+        new_ACKs++;
+        windowcount--;
+        buffer[index].acknum = packet.acknum;
+      }
+      else
+      {
+        if (TRACE > 0)
+          printf("----A: duplicate ACK received, do nothing!\n");
+      }
+      if (packet.acknum == seqfirst)
+      {
+        for (i = 0; i < WINDOWSIZE; i++)
+        {
+          if (buffer[i].acknum != NOTINUSE && strcmp(buffer[i].payload, "") != 0)
+            ackcount++;
+          else
+            break;
         }
-        else
-          if (TRACE > 0)
-        printf ("----A: duplicate ACK received, do nothing!\n");
+
+        first_seq = (first_seq + ackcount) % SEQSPACE;
+
+        /*update buffer*/
+        for (i = 0; i < WINDOWSIZE; i++)
+        {
+          if (buffer[i + ackcount].acknum == NOTINUSE || (buffer[i].seqnum + ackcount) % SEQSPACE == A_nextseqnum)
+            buffer[i] = buffer[i + ackcount];
+        }
+        /*Reset timer*/
+        stoptimer(A);
+        if (windowcount > 0)
+          starttimer(A, RTT);
+      }
+      else
+      {
+        buffer[index].acknum = packet.acknum;
+      }
+    }
   }
   else 
     if (TRACE > 0)
@@ -167,23 +198,14 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt(void)
 {
-  int i;
-
   if (TRACE > 0)
+  {
     printf("----A: time out,resend packets!\n");
-
-  for(i=0; i<windowcount; i++) {
-
-    if (buffer[(windowfirst+i) % WINDOWSIZE].acknum == NOTINUSE)
-    {
-      if (TRACE > 0)
-        printf ("---A: resending packet %d\n", (buffer[(windowfirst+i) % WINDOWSIZE]).seqnum);
-      
-      tolayer3(A,buffer[(windowfirst+i) % WINDOWSIZE]);
-      packets_resent++;
-    }
+    printf("---A: resending packet %d\n", (buffer[0]).seqnum);
   }
-  starttimer(A,RTT);
+  tolayer3(A, buffer[0]);
+  packets_resent++;
+  starttimer(A, RTT);
 }       
 
 
@@ -200,6 +222,7 @@ void A_init(void)
 		     so initially this is set to -1
 		   */
   windowcount = 0;
+  first_seq = 0;
 }
 
 
