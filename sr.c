@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 #include "emulator.h"
 #include "sr.h"
 
@@ -61,7 +62,6 @@ static int windowfirst, windowlast;    /* array indexes of the first/last packet
 static int windowcount;                /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
 static int first_seq;               /*record the first seq num of the window*/
-
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
@@ -135,8 +135,7 @@ void A_input(struct pkt packet)
     /* check if new ACK or duplicate */
     seqfirst = first_seq;
     seqlast = (first_seq + WINDOWSIZE - 1) % SEQSPACE;
-    int seqfirst = buffer[windowfirst].seqnum;
-    int seqlast = buffer[windowlast].seqnum;
+
     /* check case when seqnum has and hasn't wrapped */
     if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
         ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) 
@@ -245,11 +244,10 @@ void B_input(struct pkt packet)
   int B_seqlast;
   int B_index;
   int count = 0;
-  int B_base;
 
   /* if not corrupted and received packet is in order */
   
-  if (IsCorrupted(packet)==-1)
+  if (!IsCorrupted(packet))
   {
     if (TRACE > 0)
       printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
@@ -331,7 +329,7 @@ void B_init(void)
   {
     B_buffer[i].seqnum = NOTINUSE;  /*mark as empty*/ 
   }}
-  last = -1;
+  
 
 /******************************************************************************
  * The following functions need be completed only for bi-directional messages *
