@@ -234,73 +234,83 @@ static int B_nextseqnum;   /* the sequence number for the next packets sent by B
 static struct pkt B_buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
 static int B_windowfirst, B_windowlast;    /* array indexes of the first/last packet awaiting ACK */
 static int B_seqfirst, B_seqlast, B_windowcount;
-
+static int last;
+static int B_base; 
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
   int i;
-  int buffer_index;
+  int B_seqfirst;
+  int B_seqlast;
+  int B_index;
+  int count = 0;
+  int B_base;
 
   /* if not corrupted and received packet is in order */
   
-  if  ( (!IsCorrupted(packet))  && (((B_seqfirst <= B_seqlast) && (packet.seqnum >= B_seqfirst && packet.seqnum <= B_seqlast)) ||
-              ((B_seqfirst > B_seqlast) && (packet.seqnum >= B_seqfirst || packet.seqnum <= B_seqlast))) ) {
-    /*Calculate which index should put in*/
-    if (packet.seqnum >= B_seqfirst)
-      buffer_index = packet.seqnum - B_seqfirst;
-    else
-      buffer_index = SEQSPACE - B_seqfirst + packet.seqnum;
-
-    if (B_buffer[buffer_index].seqnum == NOTINUSE)
-    {
-      B_buffer[buffer_index] = packet;
-      if (TRACE > 0)
-        printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
-      packets_received++;
-    }
-    /* deliver to receiving application */
-    /* expectedseqnum and B_seqfirst is same, can remove one */
-    while (B_buffer[0].seqnum == expectedseqnum)
-    {
-      tolayer5(B, B_buffer[0].payload);
-      for (i=0;i<WINDOWSIZE-1;i++)
-      {
-        B_buffer[i] = B_buffer[i+1];
-      }
-      B_buffer[WINDOWSIZE-1].seqnum = NOTINUSE;
-      expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
-      B_seqfirst = (B_seqfirst + 1) % SEQSPACE;
-      B_seqlast = (B_seqlast + 1) % SEQSPACE;
-    }
+  if (IsCorrupted(packet)==-1)
+  {
+    if (TRACE > 0)
+      printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
+    packets_received++;
+    /*create sendpkt*/
     /* send an ACK for the received packet */
     sendpkt.acknum = packet.seqnum;
+    sendpkt.seqnum = NOTINUSE;
+    /* we don't have any data to send.  fill payload with 0's */
+    for (i = 0; i < 20; i++)
+      sendpkt.payload[i] = '0';
+    /* computer checksum */
+    sendpkt.checksum = ComputeChecksum(sendpkt);
+    /*send ack*/
+    tolayer3(B, sendpkt);
+    /* need to check if new packet or duplicate */
+    B_seqfirst = B_base;
+    B_seqlast = (B_base + WINDOWSIZE-1) % SEQSPACE;
 
-    /* update state variables */
-    
-  }
-  else  {
-    if (!IsCorrupted(packet))
-      if (((B_seqfirst-WINDOWSIZE >= 0) && (packet.seqnum >= B_seqfirst-WINDOWSIZE)) || ((B_seqfirst-WINDOWSIZE < 0) && ((SEQSPACE-B_seqfirst+WINDOWSIZE-1 <= packet.seqnum ) || ( packet.seqnum < B_seqfirst-1))))
-        {
-          /* packet is corrupted or out of order resend last ACK */
-          if (TRACE > 0) 
-            printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
-          sendpkt.acknum = packet.seqnum;
-          /* create packet */
-          sendpkt.seqnum = B_nextseqnum;
-          B_nextseqnum = (B_nextseqnum + 1) % 2;
-            
-          /* we don't have any data to send.  fill payload with 0's */
-          for ( i=0; i<20 ; i++ ) 
-            sendpkt.payload[i] = '0';  
+    if (((B_seqfirst <= B_seqlast) && (packet.seqnum >= B_seqfirst && packet.seqnum <= B_seqlast)) ||
+        ((B_seqfirst > B_seqlast) && (packet.seqnum >= B_seqfirst || packet.seqnum <= B_seqlast)))
+    {
 
-          /* computer checksum */
-          sendpkt.checksum = ComputeChecksum(sendpkt); 
+      /*get index*/
+      if (packet.seqnum >= B_seqfirst)
+        B_index = packet.seqnum - B_seqfirst;
+      else
+        B_index = WINDOWSIZE - B_seqfirst + packet.seqnum;
 
-          /* send out packet */
-          tolayer3 (B, sendpkt);
+      last = last > B_index ? last:B_index;
+
+      /*if not duplicate, save to buffer*/
+
+      if (strcmp(B_buffer[B_index].payload, packet.payload) !=0)
+      {
+        /*buffer it*/
+        packet.acknum = packet.seqnum;
+        B_buffer[B_index] = packet;
+        /*if it is the base*/
+        if (packet.seqnum == B_seqfirst){
+          for (i = 0; i < WINDOWSIZE; i++)
+          {
+            if (B_buffer[i].acknum >= 0 && strcmp(B_buffer[i].payload, "")!= 0)
+              count++;
+            else
+              break;
+          }
+          /* update state variables */
+          B_base = (B_base + count) % SEQSPACE;
+          /*update buffer*/
+          for (i = 0; i <WINDOWSIZE; i++)
+          {
+            if ((i + count) <= (last+1))
+              B_buffer[i] = B_buffer[i + count];
+          }
+
         }
+        /* deliver to receiving application */
+        tolayer5(B, packet.payload);
+      }
+    }
   }
 }
 
@@ -311,7 +321,7 @@ void B_init(void)
   int i;
   expectedseqnum = 0;
   B_nextseqnum = 1;
-
+  B_base = 0;
   B_windowfirst = 0;
   B_windowlast = -1; 
   B_windowcount = 0;
@@ -321,6 +331,7 @@ void B_init(void)
   {
     B_buffer[i].seqnum = NOTINUSE;  /*mark as empty*/ 
   }}
+  last = -1;
 
 /******************************************************************************
  * The following functions need be completed only for bi-directional messages *
